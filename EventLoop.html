@@ -1,0 +1,175 @@
+ <!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demystifying the Node.js Event Loop</title>
+    <style>
+        :root {
+            --bg-color: #121214;
+            --card-bg: #1e1e24;
+            --text-color: #e2e8f0;
+            --accent-color: #4ade80;
+            --code-bg: #2d2d38;
+            --border-color: #3f3f46;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            line-height: 1.6;
+            margin: 0;
+            padding: 2rem 1rem;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: var(--accent-color);
+            font-size: 2.5rem;
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 0.5rem;
+            margin-bottom: 2rem;
+        }
+
+        h2 {
+            color: var(--accent-color);
+            font-size: 1.8rem;
+            margin-top: 2.5rem;
+        }
+
+        h3 {
+            color: #f39c12;
+            margin-top: 1.5rem;
+        }
+
+        p {
+            font-size: 1.1rem;
+            margin-bottom: 1.2rem;
+        }
+
+        strong {
+            color: #fff;
+        }
+
+        .highlight-box {
+            background-color: var(--card-bg);
+            border-left: 5px solid var(--accent-color);
+            padding: 1.5rem;
+            border-radius: 0 8px 8px 0;
+            margin: 1.5rem 0;
+        }
+
+        .analogy-box {
+            background-color: #1a2536;
+            border-left: 5px solid #3b82f6;
+            padding: 1.5rem;
+            border-radius: 0 8px 8px 0;
+            margin: 1.5rem 0;
+        }
+
+        pre {
+            background-color: var(--code-bg);
+            padding: 1.2rem;
+            border-radius: 8px;
+            overflow-x: auto;
+            border: 1px solid var(--border-color);
+        }
+
+        code {
+            font-family: 'Fira Code', Consolas, Monaco, 'Courier New', Courier, monospace;
+            font-size: 0.95rem;
+            color: #f43f5e;
+        }
+
+        pre code {
+            color: #e2e8f0;
+        }
+
+        .keyword { color: #ff79c6; }
+        .function { color: #50fa7b; }
+        .string { color: #f1fa8c; }
+        .comment { color: #6272a4; font-style: italic; }
+        .number { color: #bd93f9; }
+
+        ol {
+            padding-left: 1.5rem;
+        }
+
+        li {
+            margin-bottom: 0.8rem;
+            font-size: 1.1rem;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Demystifying the Node.js Event Loop</h1>
+        
+        <p><strong>The Node.js Event Loop is a continuous, single-threaded mechanism that allows Node.js to perform non-blocking I/O operations, despite JavaScript being single-threaded.</strong></p>
+
+        <div class="analogy-box">
+            <strong>The Fast-Food Analogy:</strong><br>
+            Think of Node.js as a restaurant with only <strong>one cashier</strong> (the single thread). Instead of standing still and waiting 10 minutes for a complex meal to cook (blocking the line), the cashier takes the order, passes it to the kitchen staff (background threads), gives the customer a buzzer (callback), and immediately helps the next person. When the kitchen finishes, the buzzer goes off, and the cashier hands over the food.
+        </div>
+
+        <h2>Yes, It's a Literal Loop!</h2>
+        <p>Under the hood, Node.js uses a library written in C++ called <strong>Libuv</strong>. Inside that source code, the event loop runs inside a literal <code>while</code> loop that looks conceptually like this:</p>
+
+<pre><code><span class="keyword">while</span> (<span class="function">has_more_active_tasks</span>() == <span class="keyword">true</span>) {
+    <span class="comment">// 1. Timers (setTimeout, setInterval)</span>
+    <span class="comment">// 2. Pending Callbacks (System errors, TCP errors)</span>
+    <span class="comment">// 3. Idle, Prepare (Internal system use only)</span>
+    <span class="comment">// 4. Poll (Retrieve new I/O events & run their callbacks)</span>
+    <span class="comment">// 5. Check (setImmediate callbacks)</span>
+    <span class="comment">// 6. Close Callbacks (socket.close(), etc.)</span>
+}</code></pre>
+
+        <h2>The 6 Phases of the Loop</h2>
+        <p>Every single cycle through these phases is called a <strong>tick</strong>. If a phase has no tasks to execute, the loop immediately skips it and moves to the next.</p>
+        
+        <ol>
+            <li><strong>Timers:</strong> Executes callbacks scheduled by <code>setTimeout()</code> and <code>setInterval()</code> once their threshold has passed.</li>
+            <li><strong>Pending Callbacks:</strong> Executes system-level callbacks, such as certain types of TCP network errors.</li>
+            <li><strong>Idle, Prepare:</strong> Used <em>strictly internally</em> by Node.js for housekeeping and preparing for the next phase. Developers cannot execute code here.</li>
+            <li><strong>Poll:</strong> The heart of the loop. Node retrieves new I/O events (file reading, incoming HTTP requests, database responses) and executes their callbacks. If the queue is empty, the loop will pause here and wait.</li>
+            <li><strong>Check:</strong> Executes callbacks immediately after the poll phase finishes, specifically those scheduled by <code>setImmediate()</code>.</li>
+            <li><strong>Close Callbacks:</strong> Handles cleanup events like closing database connections or destruction of network sockets (e.g., <code>socket.on('close')</code>).</li>
+        </ol>
+
+        <h2>When Does the Loop Stop?</h2>
+        <p>The event loop keeps running as long as <code>has_more_active_tasks()</code> evaluates to <code>true</code>. Node.js maintains an internal background counter of active handles. The loop terminates automatically **the exact microsecond this counter hits zero**.</p>
+
+        <h3>Scenario A: Why a simple file stops immediately</h3>
+        <p>If you run a script that only contains synchronous commands, Node.js processes it and exits instantly:</p>
+<pre><code><span class="function">console</span>.<span class="function">log</span>(<span class="string">"Hello World"</span>); 
+<span class="comment">// The code prints to the terminal. </span>
+<span class="comment">// The Event Loop checks if any background tasks remain.</span>
+<span class="comment">// Finding zero tasks, the process terminates immediately!</span></code></pre>
+
+        <h3>Scenario B: Why a Web Server keeps running forever</h3>
+        <p>When you create an HTTP server, you are registering a persistent network listener. This forces the internal background counter to remain above zero:</p>
+<pre><code><span class="keyword">const</span> http = <span class="function">require</span>(<span class="string">'http'</span>);
+
+<span class="comment">// Registers a persistent handle waiting on port 3000</span>
+http.<span class="function">createServer</span>((req, res) => {
+    res.<span class="function">end</span>(<span class="string">"Hi"</span>);
+}).<span class="function">listen</span>(<span class="number">3000</span>);
+
+<span class="comment">// The loop enters the 'Poll' phase, sees the server is active, </span>
+<span class="comment">// and spins indefinitely waiting for user traffic. </span>
+<span class="comment">// It will never stop until you kill the terminal process (Ctrl + C).</span></code></pre>
+
+        <div class="highlight-box">
+            <strong>The VIP Lane (Microtask Queue):</strong><br>
+            Don't forget! Promises (<code>.then()</code>/<code>await</code>) and <code>process.nextTick()</code> live in a high-priority queue. Node.js will pause the main event loop to empty this VIP queue the second an individual operation finishes, before moving on to the next major phase.
+        </div>
+    </div>
+
+</body>
+</html>
