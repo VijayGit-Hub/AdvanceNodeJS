@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Technical Architecture: Node.js Concurrency on macOS</title>
+    <style>
+        :root {
+            --bg-color: #f8f9fa;
+            --text-color: #212529;
+            --card-bg: #ffffff;
+            --primary: #0066cc;
+            --accent-glow: #e6f0fa;
+            --highlight-txt: #d9383a;
+            --highlight-bg: #fdf2f2;
+            --border-color: #dee2e6;
+            --code-bg: #272822;
+            --code-txt: #f8f8f2;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 40px 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: var(--card-bg);
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+        }
+
+        h1 {
+            font-size: 2.2rem;
+            color: #111;
+            border-bottom: 2px solid var(--primary);
+            padding-bottom: 10px;
+            margin-top: 0;
+        }
+
+        h2 {
+            font-size: 1.5rem;
+            color: var(--primary);
+            margin-top: 30px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 5px;
+        }
+
+        h3 {
+            font-size: 1.2rem;
+            color: #333;
+        }
+
+        p, li {
+            font-size: 1.05rem;
+            color: #495057;
+        }
+
+        ul {
+            padding-left: 20px;
+        }
+
+        li {
+            margin-bottom: 8px;
+        }
+
+        hr {
+            border: 0;
+            height: 1px;
+            background: var(--border-color);
+            margin: 40px 0;
+        }
+
+        .important-bold {
+            font-weight: bold;
+            color: #111;
+        }
+
+        .alert-text {
+            color: var(--highlight-txt);
+            background-color: var(--highlight-bg);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 600;
+        }
+
+        .critical-underline {
+            text-decoration: underline;
+            text-decoration-color: var(--highlight-txt);
+            text-decoration-thickness: 2px;
+            font-weight: 600;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            font-size: 0.95rem;
+        }
+
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        th {
+            background-color: var(--accent-glow);
+            color: #004085;
+            font-weight: 600;
+        }
+
+        tr:hover {
+            background-color: #fdfdfd;
+        }
+
+        pre {
+            background: var(--code-bg);
+            color: var(--code-txt);
+            padding: 18px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+            font-size: 0.9rem;
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.3);
+        }
+
+        code {
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+            background: #e9ecef;
+            color: #b83280;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+
+        pre code {
+            background: transparent;
+            color: inherit;
+            padding: 0;
+            border-radius: 0;
+        }
+
+        .keyword { color: #f92672; }
+        .string { color: #e6db74; }
+        .comment { color: #75715e; font-style: italic; }
+        .number { color: #ae81ff; }
+        .function { color: #a6e22e; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+
+    <h1>Technical Architecture: Node.js Concurrency on macOS (8-Core Apple Silicon)</h1>
+    <p>This document synthesizes our discussion on how a real-time Node.js application (such as one using Live View or WebSockets) interacts with the 8-core hardware architecture of a modern MacBook Air.</p>
+
+    <hr>
+
+    <h2>1. Finding Your Hardware Specifications</h2>
+    <p>To optimize a Node.js application, you must first verify the exact core configuration of your machine. macOS provides two primary methods to check this data:</p>
+
+    <h3>Graphical User Interface (GUI)</h3>
+    <ul>
+        <li>Hold down the <span class="important-bold">Option</span> key on your keyboard.</li>
+        <li>Click the <span class="important-bold">Apple logo ()</span> in the top-left corner of the screen.</li>
+        <li>Select <span class="important-bold">System Information</span>.</li>
+        <li>Click <span class="important-bold">Hardware</span> in the left sidebar to view the <span class="alert-text">Total Number of Cores</span>.</li>
+        <li>Click <span class="important-bold">Graphics/Displays</span> to view the GPU cores.</li>
+    </ul>
+
+    <h3>Command Line Interface (CLI)</h3>
+    <p>Open your terminal and execute the following command to return the total number of logical CPU cores:</p>
+<pre><code><span class="function">sysctl</span> -n hw.ncpu</code></pre>
+
+    <hr>
+
+    <h2>2. The Multi-Core Misconception in Node.js</h2>
+    <p>While Node.js executes your standard JavaScript code inside a <span class="critical-underline">single main thread and one event loop</span>, it is fundamentally false to assume a multi-core CPU goes to waste. The underlying system automatically splits operations across the architecture in two distinct ways:</p>
+
+    <ul>
+        <li><span class="important-bold">Libuv Thread Pool (Background I/O):</span> Heavy background operations—such as database queries, cryptography, or reading files from disk—are automatically offloaded to a C++ library called Libuv. By default, Libuv runs a pool of <span class="alert-text">4 background threads</span> that macOS dynamically schedules across your available CPU cores.</li>
+        <li><span class="important-bold">V8 Engine Assistance:</span> The Google V8 engine handles tasks like Just-In-Time (JIT) compilation and Garbage Collection (memory management) on its own separate background threads, keeping the main loop unblocked.</li>
+    </ul>
+
+    <h3>Apple Silicon Asymmetric Core Architecture</h3>
+    <p>An 8-core MacBook Air distributes tasks based on power requirements:</p>
+    <ul>
+        <li><span class="important-bold">Performance Cores (P-Cores):</span> Handle active code compilation (<code>npm run dev</code>) and immediate incoming network requests.</li>
+        <li><span class="important-bold">Efficiency Cores (E-Cores):</span> Quietly handle long-running development tools, file-watching utilities (like <code>nodemon</code>), and local database instances (like PostgreSQL or MongoDB). This split eliminates thermal throttling and optimizes battery life.</li>
+    </ul>
+
+    <hr>
+
+    <h2>3. Limits of Multi-Threading & Concurrency</h2>
+    <p>When writing high-concurrency applications, developers must balance physical limits against memory costs.</p>
+
+    <h3>Thread Mechanisms and System Impacts</h3>
+    <table>
+        <thead>
+            <tr>
+                <th>Thread Mechanism</th>
+                <th>Default Size</th>
+                <th>Maximum Limit</th>
+                <th>System Impact</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td class="important-bold">Libuv Thread Pool</td>
+                <td>4 threads</td>
+                <td>1,024 threads (<code>UV_THREADPOOL_SIZE</code>)</td>
+                <td>Low footprint; handles waiting for asynchronous system files and networks.</td>
+            </tr>
+            <tr>
+                <td class="important-bold">JavaScript Worker Threads</td>
+                <td>0 (Spawned manually)</td>
+                <td>Bound only by System RAM</td>
+                <td>High footprint (<span class="alert-text">10MB - 30MB per thread</span>); each spawns a distinct V8 instance.</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h3>The Physical Reality of an 8-Core System</h3>
+    <ul>
+        <li><span class="important-bold">True Parallelism vs. Context Switching:</span> Even if you programmatically generate 1,000 worker threads, an 8-core CPU <span class="critical-underline">can only compute exactly 8 threads at the exact same microsecond</span>. Spawning too many threads forces the operating system into intensive <span class="alert-text">context switching</span>, dragging application performance down.</li>
+        <li><span class="important-bold">Memory Exhaustion:</span> Because each <code>worker_thread</code> requires isolated memory space, creating hundreds of unmanaged workers <span class="critical-underline">will rapidly exhaust system RAM</span>, causing the application to crash.</li>
+    </ul>
+
+    <hr>
+
+    <h2>4. Best Practices for Hardware-Aware Node.js Code</h2>
+    <p>To achieve peak performance for Live View streaming and data processing, write code that dynamically queries your MacBook Air's hardware capacity at runtime rather than hardcoding arbitrary thread counts.</p>
+
+<pre><code><span class="keyword">const</span> os = <span class="function">require</span>(<span class="string">'os'</span>);
+<span class="keyword">const</span> { Worker } = <span class="function">require</span>(<span class="string">'worker_threads'</span>);
+
+<span class="comment">// Dynamically fetches your core count (Returns 8 on your MacBook Air)</span>
+<span class="keyword">const</span> totalCores = os.<span class="function">cpus</span>().length; 
+console.log(<span class="string">`Optimizing application for ${totalCores} execution units.`</span>);
