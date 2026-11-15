@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Architecture Guide: Node.js in Kubernetes</title>
+    <!-- Modern, highly readable fonts -->
+    <link rel="preconnect" href="https://googleapis.com">
+    <link rel="preconnect" href="https://gstatic.com" crossorigin>
+    <link href="https://googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-code: #0b0f19;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent-blue: #38bdf8;
+            --accent-green: #34d399;
+            --accent-orange: #fb923c;
+            --accent-pink: #f472b6;
+            --border-color: #334155;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-main);
+            line-height: 1.6;
+            padding: 2rem 1rem;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 3.5rem;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 2rem;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            letter-spacing: -0.05em;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(to right, var(--accent-blue), var(--accent-green));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .subtitle {
+            color: var(--text-muted);
+            font-size: 1.1rem;
+        }
+
+        section {
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 2.5rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+        }
+
+        h2 {
+            font-size: 1.5rem;
+            color: var(--accent-blue);
+            margin-bottom: 1.25rem;
+            display: flex;
+            align-items: center;
+            font-weight: 600;
+        }
+
+        p {
+            color: #cbd5e1;
+            margin-bottom: 1.25rem;
+            font-size: 1.05rem;
+        }
+
+        strong {
+            color: var(--text-main);
+            font-weight: 600;
+        }
+
+        /* Lists */
+        ul {
+            list-style: none;
+            margin-bottom: 1.5rem;
+        }
+
+        li {
+            position: relative;
+            padding-left: 1.5rem;
+            margin-bottom: 0.75rem;
+            color: #cbd5e1;
+        }
+
+        li::before {
+            content: "→";
+            position: absolute;
+            left: 0;
+            color: var(--accent-green);
+            font-weight: bold;
+        }
+
+        /* Table Design */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1.5rem 0;
+            font-size: 0.95rem;
+        }
+
+        th, td {
+            padding: 0.75rem 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        th {
+            background-color: rgba(56, 189, 248, 0.1);
+            color: var(--accent-blue);
+            font-weight: 600;
+        }
+
+        td {
+            color: #cbd5e1;
+        }
+
+        /* Code Blocks styling */
+        .code-container {
+            position: relative;
+            margin: 1.5rem 0;
+            border-radius: 8px;
+            overflow: hidden;
+            background-color: var(--bg-code);
+            border: 1px solid var(--border-color);
+        }
+
+        .code-header {
+            background-color: rgba(255, 255, 255, 0.03);
+            padding: 0.5rem 1rem;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            border-bottom: 1px solid var(--border-color);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            font-weight: 500;
+        }
+
+        pre {
+            font-family: 'Fira Code', monospace;
+            font-size: 0.9rem;
+            padding: 1.25rem;
+            overflow-x: auto;
+            color: #e2e8f0;
+        }
+
+        /* Token Highlighting COLORS */
+        .c-comment  { color: #64748b; font-style: italic; } /* Muted gray for comments */
+        .c-keyword  { color: #f472b6; font-weight: 500; }  /* Pink for keywords/tags */
+        .c-string   { color: #34d399; }                     /* Green for strings */
+        .c-number   { color: #fb923c; }                     /* Orange for numbers */
+        .c-variable { color: #38bdf8; }                     /* Blue for variables/keys */
+        .c-method   { color: #a78bfa; }                     /* Purple for methods */
+
+        /* Callout box */
+        .callout {
+            background: linear-gradient(135deg, rgba(56, 189, 248, 0.1) 0%, rgba(52, 211, 153, 0.05) 100%);
+            border-left: 4px solid var(--accent-blue);
+            padding: 1.25rem;
+            border-radius: 0 8px 8px 0;
+            margin: 1.5rem 0;
+        }
+
+        .callout-title {
+            font-weight: 600;
+            color: var(--text-main);
+            margin-bottom: 0.25rem;
+        }
+
+        .callout p {
+            margin-bottom: 0;
+            font-size: 0.95rem;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <header>
+        <h1>Node.js Architecture Guide for Kubernetes</h1>
+        <p class="subtitle">Ditching PM2 / Clustering for Native Cloud Scaling</p>
+    </header>
+
+    <!-- SECTION 1: THE CORE ARCHITECTURE RULE -->
+    <section>
+        <h2>1. The Core Architectural Philosophy</h2>
+        <p>When running applications in a cloud-native architecture, <strong>Kubernetes acts as the overall cluster manager</strong>. Running an internal process manager like PM2 or utilizing the native Node.js <code>cluster</code> module inside a container creates a foundational architectural conflict.</p>
+        
+        <div class="callout">
+            <div class="callout-title">The Golden Rule</div>
+            <p>Follow the <strong>one process per container</strong> principle. Let Kubernetes scale the pods; let Node.js focus purely on processing incoming execution cycles sequentially on a single thread.</p>
+        </div>
+    </section>
+
+    <!-- SECTION 2: WHY WE AVOID PM2 -->
+    <section>
+        <h2>2. Why PM2 / Clustering Fails in Kubernetes</h2>
+        <ul>
+            <li><strong>The Split-Brain Conflict:</strong> PM2 catches internal worker crashes and restarts them silently. Because the master process remains alive, Kubernetes probes see a healthy container and never trigger native self-healing or structural restarts.</li>
+            <li><strong>Resource Blindness:</strong> By default, Node.js clusters detect the host node's total physical cores (e.g., 64 cores) rather than your container's cgroup limit. Spawning 64 workers inside a container limited to 1 or 2 CPUs causes extreme CPU throttling and out-of-memory crashes.</li>
+            <li><strong>PID 1 Signal Blocking:</strong> PM2 does not act as a proper system init daemon. When Kubernetes tries to scale down or roll out a deployment, the <code>SIGTERM</code> signal is rarely forwarded correctly, resulting in dirty, non-graceful process destruction.</li>
+        </ul>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>PM2 Feature</th>
+                    <th>Kubernetes Replacement Mechanism</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>pm2 start -i max</code> (Cluster Mode)</td>
+                    <td>Horizontal pod scaling via <code>replicas: X</code> inside the Deployment template.</td>
+                </tr>
+                <tr>
+                    <td>Automatic Crashed Restarts</td>
+                    <td>Native container monitoring with a <code>restartPolicy: Always</code> directive.</td>
+                </tr>
+                <tr>
+                    <td>Zero-Downtime Reloads</td>
+                    <td><strong>Rolling Updates</strong> paired with active Liveness and Readiness probes.</td>
+                </tr>
+            </tbody>
+        </table>
+    </section>
+
+    <!-- SECTION 3: DOCKERFILE -->
+    <section>
+        <h2>3. Production-Ready Dockerfile</h2>
+        <p>Docker is <strong>100% required</strong> to bundle your logic, configurations, and runtime dependencies into an Open Container Initiative (OCI) compliant image structure that Kubernetes can execute.</p>
+        
+        <div class="code-container">
+            <div class="code-header">Dockerfile</div>
+            <pre><code><span class="c-keyword">FROM</span> <span class="c-string">node:20-alpine</span>
+
+<span class="c-keyword">WORKDIR</span> <span class="c-string">/app</span>
+
+<span class="c-comment"># Install application dependencies securely</span>
+<span class="c-keyword">COPY</span> <span class="c-string">package*.json ./</span>
+<span class="c-keyword">RUN</span> <span class="c-string">npm ci --only=production</span>
+
+<span class="c-comment"># Bundle production application source code</span>
+<span class="c-keyword">COPY</span> <span class="c-string">. .</span>
+
+<span class="c-comment"># Drop root privileges for elevated container security</span>
+<span class="c-keyword">USER</span> <span class="c-string">node</span>
+
+<span class="c-keyword">EXPOSE</span> <span class="c-number">3000</span>
+
+<span class="c-comment"># Launch Node directly to ensure signals are captured cleanly on PID 1</span>
